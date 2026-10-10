@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 对话助手 - 支持RAG知识库</title>
+
+<!-- ========== 第三方库 CDN 引入 ========== -->
+<!-- marked: 将 Markdown 文本渲染为 HTML -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css">
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<!-- highlight.js: 代码语法高亮 -->
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
+<!-- pdf.js: 浏览器端解析 PDF 文件，提取文字 -->
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+
+<style>
+/* ========== CSS 变量：主题色配置 ========== */
+:root {
+  --bg-sidebar: #f8f9fb;      /* 侧边栏背景 */
+  --bg-main: #ffffff;          /* 主区域背景 */
+  --bg-user-bubble: #4f6ef7;   /* 用户气泡蓝色 */
+  --bg-ai-bubble: #f5f6f8;     /* AI 气泡灰色 */
+  --border: #e5e7eb;           /* 边框色 */
+  --text: #1a1a2e;             /* 主文字色 */
+  --text-dim: #6b7280;         /* 次要文字色 */
+  --hover: #eef0f4;            /* 悬停背景 */
+  --accent: #4f6ef7;           /* 主题蓝 */
+  --accent-light: #eef1ff;     /* 主题浅蓝 */
+  --shadow: 0 1px 3px rgba(0,0,0,0.06);  /* 柔和阴影 */
+}
+
+/* ========== 全局重置 ========== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg-main); color: var(--text);
+  height: 100vh; display: flex; overflow: hidden;
+}
+
+/* ========== 左侧边栏 ========== */
+.sidebar {
+  width: 260px; min-width: 260px; background: var(--bg-sidebar);
+  display: flex; flex-direction: column; border-right: 1px solid var(--border);
+}
+.sidebar-header { padding: 16px; display: flex; align-items: center; justify-content: space-between; }
+.sidebar-header h2 { font-size: 14px; font-weight: 600; }
+.new-chat-btn {
+  background: var(--accent); color: #fff; border: none;
+  padding: 7px 14px; border-radius: 8px; font-size: 12px;
+  cursor: pointer; white-space: nowrap; box-shadow: 0 2px 8px rgba(79,110,247,0.3);
+}
+.new-chat-btn:hover { background: #3d5de8; }
+.sidebar-section {
+  padding: 8px 16px; font-size: 11px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-top: 8px;
+}
+
+/* 对话列表 */
+.chat-list { flex: 1; overflow-y: auto; padding: 8px; }
+.chat-item {
+  padding: 10px 12px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; color: var(--text-dim); margin-bottom: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; justify-content: space-between; transition: all 0.15s;
+}
+.chat-item:hover { background: var(--hover); color: var(--text); }
+.chat-item.active { background: var(--accent-light); color: var(--accent); font-weight: 500; }
+.chat-item .del-btn { opacity: 0; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.chat-item:hover .del-btn { opacity: 1; }
+.chat-item .del-btn:hover { color: #ef4444; }
+
+/* ========== 知识库区域 ========== */
+.kb-section { padding: 8px; border-top: 1px solid var(--border); }
+.kb-btn {
+  width: 100%; padding: 8px; border: 1px dashed var(--border);
+  border-radius: 8px; background: #fff; color: var(--text-dim);
+  font-size: 12px; cursor: pointer; text-align: center;
+}
+.kb-btn:hover { border-color: var(--accent); color: var(--accent); }
+.kb-files { margin-top: 6px; max-height: 120px; overflow-y: auto; }
+.kb-file {
+  padding: 6px 8px; font-size: 11px; color: var(--text-dim);
+  display: flex; justify-content: space-between; align-items: center;
+  border-radius: 4px;
+}
+.kb-file:hover { background: var(--hover); }
+.kb-file .del { cursor: pointer; color: #ef4444; }
+.kb-status { font-size: 10px; color: #10b981; margin-top: 4px; text-align: center; }
+
+/* 底部模型选择 */
+.sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-dim); }
+.sidebar-footer select {
+  width: 100%; margin-top: 6px; padding: 7px 8px; background: #fff;
+  border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+  font-size: 12px; outline: none;
+}
+
+/* ========== 主聊天区域 ========== */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.chat-container { flex: 1; overflow-y: auto; padding: 24px 0; }
+.chat-inner { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+
+/* 消息气泡 */
+.message { margin-bottom: 20px; display: flex; gap: 12px; }
+.message.user { flex-direction: row-reverse; }
+.avatar {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; flex-shrink: 0;
+}
+.message.user .avatar { background: var(--bg-user-bubble); color: #fff; }
+.message.assistant .avatar { background: #10b981; color: #fff; }
+.bubble {
+  max-width: calc(100% - 80px); padding: 11px 16px; border-radius: 14px;
+  line-height: 1.7; font-size: 14px; word-break: break-word; box-shadow: var(--shadow);
+}
+.message.user .bubble { background: var(--bg-user-bubble); color: #fff; border-top-right-radius: 4px; }
+.message.assistant .bubble { background: var(--bg-ai-bubble); color: var(--text); border-top-left-radius: 4px; }
+
+/* 流式输出光标动画 */
+.bubble.streaming::after { content: '▋'; animation: blink 1s infinite; margin-left: 2px; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Markdown 渲染样式 */
+.bubble p { margin: 0.4em 0; } .bubble p:first-child { margin-top: 0; } .bubble p:last-child { margin-bottom: 0; }
+.bubble ul, .bubble ol { margin: 0.4em 0; padding-left: 1.5em; }
+.bubble li { margin: 0.2em 0; }
+.bubble h1, .bubble h2, .bubble h3 { margin: 0.6em 0 0.3em; }
+.bubble h1 { font-size: 1.25em; } .bubble h2 { font-size: 1.1em; } .bubble h3 { font-size: 1.02em; }
+.bubble code { background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; font-size: 0.88em; font-family: "Cascadia Code", Consolas, monospace; }
+.message.user .bubble code { background: rgba(255,255,255,0.2); }
+.bubble pre { background: #f6f8fa; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 0.5em 0; border: 1px solid var(--border); }
+.bubble pre code { background: none; padding: 0; font-size: 13px; }
+.bubble blockquote { border-left: 3px solid var(--border); padding-left: 12px; margin: 0.5em 0; color: var(--text-dim); }
+.bubble table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
+.bubble th, .bubble td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.bubble th { background: var(--bg-ai-bubble); }
+.bubble a { color: var(--accent); }
+
+/* RAG 来源标签 */
+.kb-tag {
+  display: inline-block; background: var(--accent-light); color: var(--accent);
+  font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-bottom: 4px;
+}
+
+/* ========== 底部输入区 ========== */
+.input-area { padding: 12px 24px 20px; }
+.input-inner { max-width: 760px; margin: 0 auto; }
+.settings-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; font-size: 11px; color: var(--text-dim); }
+.settings-row input, .settings-row textarea {
+  background: #fff; border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 5px 8px; font-size: 11px; outline: none;
+}
+.settings-row input { flex: 1; min-width: 100px; }
+.settings-row textarea { flex: 2; min-width: 150px; resize: vertical; max-height: 50px; }
+.settings-row input:focus, .settings-row textarea:focus { border-color: var(--accent); }
+.settings-row button {
+  background: #fff; border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.settings-row button:hover { background: var(--hover); color: var(--text); }
+
+/* 输入框 */
+.input-box {
+  display: flex; gap: 10px; align-items: flex-end; background: #fff;
+  border: 1px solid var(--border); border-radius: 16px; padding: 8px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06); transition: box-shadow 0.2s, border-color 0.2s;
+}
+.input-box:focus-within { border-color: var(--accent); box-shadow: 0 2px 16px rgba(79,110,247,0.12); }
+.input-box textarea {
+  flex: 1; background: none; border: none; outline: none; color: var(--text);
+  font-size: 14px; resize: none; max-height: 150px; padding: 8px; font-family: inherit; line-height: 1.5;
+}
+.send-btn {
+  background: var(--accent); color: #fff; border: none; border-radius: 10px;
+  width: 36px; height: 36px; cursor: pointer; font-size: 16px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; transition: background 0.15s;
+}
+.send-btn:disabled { background: #c5c9d4; cursor: not-allowed; }
+.send-btn:hover:not(:disabled) { background: #3d5de8; }
+
+/* 空状态 */
+.empty-state { text-align: center; padding: 80px 20px; color: var(--text-dim); }
+.empty-state h2 { font-size: 26px; margin-bottom: 8px; color: var(--text); font-weight: 600; }
+.empty-state p { font-size: 14px; }
+
+/* 滚动条美化 */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+</style>
+</head>
+<body>
+
+<!-- ========== 左侧边栏 ========== -->
+<div class="sidebar">
+  <!-- 顶部：标题 + 新对话按钮 -->
+  <div class="sidebar-header">
+    <h2>💬 对话列表</h2>
+    <button class="new-chat-btn" onclick="newChat()">+ 新对话</button>
+  </div>
+  <!-- 对话列表容器 -->
+  <div class="chat-list" id="chatList"></div>
+
+  <!-- 知识库（RAG）区域 -->
+  <div class="kb-section">
+    <div class="sidebar-section">📚 知识库（RAG）</div>
+    <button class="kb-btn" onclick="document.getElementById('fileInput').click()">📄 上传文档</button>
+    <input type="file" id="fileInput" accept=".txt,.md,.markdown,.html,.htm,.pdf" style="display:none" onchange="uploadFile(event)">
+    <div class="kb-files" id="kbFiles"></div>
+    <div class="kb-status" id="kbStatus"></div>
+    <button class="kb-btn" style="margin-top:6px" onclick="exportChat()">📥 导出对话</button>
+  </div>
+
+  <!-- 底部：模型选择下拉框 -->
+  <div class="sidebar-footer">
+    <label>模型选择</label>
+    <select id="modelSelect" onchange="changeModel()">
+      <option value="qwen3.8-flash">qwen3.8-flash（快速）</option>
+      <option value="qwen3.8-max">qwen3.8-max（最强）</option>
+      <option value="qwen-plus">qwen-plus（均衡）</option>
+      <option value="qwen-turbo">qwen-turbo（最省）</option>
+    </select>
+  </div>
+</div>
+
+<!-- ========== 主聊天区域 ========== -->
+<div class="main">
+  <div class="chat-container" id="chatBox"></div>
+  <div class="input-area">
+    <div class="input-inner">
+      <!-- 设置行：API Key + 人设 -->
+      <div class="settings-row">
+        <span>Key</span>
+        <input type="password" id="apiKey" placeholder="sk-xxx">
+        <span>人设</span>
+        <textarea id="systemPrompt" rows="1" placeholder="定义AI角色..."></textarea>
+        <button onclick="saveSettings()">保存</button>
+      </div>
+      <!-- 消息输入框 -->
+      <div class="input-box">
+        <textarea id="userInput" rows="1" placeholder="输入消息，Ctrl+Enter 发送..."></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()">➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+ * AI 对话助手 - 核心逻辑
+ * 技术栈：原生 JavaScript + 通义千问 API + RAG 向量检索
+ * ================================================================ */
+
+// ===== API 配置 =====
+const API_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';  // 对话补全接口
+const EMBED_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings';       // 向量嵌入接口
+
+// ===== DOM 元素引用 =====
+const chatBox = document.getElementById('chatBox');          // 消息容器
+const chatList = document.getElementById('chatList');        // 对话列表
+const userInput = document.getElementById('userInput');        // 输入框
+const sendBtn = document.getElementById('sendBtn');          // 发送按钮
+const apiKeyInput = document.getElementById('apiKey');        // API Key 输入
+const systemPromptInput = document.getElementById('systemPrompt'); // 人设输入
+const modelSelect = document.getElementById('modelSelect');   // 模型选择
+const kbFilesDiv = document.getElementById('kbFiles');         // 知识库文件列表
+const kbStatus = document.getElementById('kbStatus');          // 知识库状态提示
+
+// ===== 全局状态 =====
+let model = 'qwen3.8-flash';     // 当前模型
+let chats = [];                   // 所有对话数组
+let currentChatId = null;         // 当前选中的对话 ID
+let knowledgeChunks = [];         // RAG 知识库：{ text, vector, source }
+
+// ===== marked.js 配置：Markdown 渲染 + 代码高亮 =====
+marked.setOptions({
+  highlight: function(code, lang) {
+    if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+    return hljs.highlightAuto(code).value;
+  },
+  breaks: true  // 换行符转为 <br>
+});
+
+
+// ================================================================
+// 第一部分：对话管理（多对话 CRUD + localStorage 持久化）
+// ================================================================
+
+/** 从 localStorage 加载历史对话 */
+function loadChats() {
+  const saved = localStorage.getItem('chats');
+  chats = saved ? JSON.parse(saved) : [];
+  if (chats.length === 0) newChat();  // 没有对话就新建一个
+  else currentChatId = chats[chats.length - 1].id;  // 默认选中最后一个
+}
+
+/** 保存对话到 localStorage 并刷新列表 */
+function saveChats() {
+  localStorage.setItem('chats', JSON.stringify(chats));
+  renderChatList();
+}
+
+/** 新建一个空对话 */
+function newChat() {
+  const chat = { id: Date.now(), title: '新对话', messages: [] };
+  chats.push(chat);
+  currentChatId = chat.id;
+  saveChats();
+  renderChat();
+}
+
+/** 切换到指定对话 */
+function switchChat(id) { currentChatId = id; renderChat(); }
+
+/** 删除对话 */
+function deleteChat(id) {
+  chats = chats.filter(c => c.id !== id);
+  if (currentChatId === id) {
+    if (chats.length === 0) newChat();
+    else currentChatId = chats[chats.length - 1].id;
+  }
+  saveChats(); renderChat();
+}
+
+/** 获取当前对话对象 */
+function getCurrentChat() { return chats.find(c => c.id === currentChatId); }
+
+/** HTML 转义，防止 XSS */
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+/** 渲染左侧对话列表 */
+function renderChatList() {
+  chatList.innerHTML = chats.map(c => `
+    <div class="chat-item ${c.id === currentChatId ? 'active' : ''}" onclick="switchChat(${c.id})">
+      <span>${escapeHtml(c.title)}</span>
+      <button class="del-btn" onclick="event.stopPropagation(); deleteChat(${c.id})">✕</button>
+    </div>`).join('');
+}
+
+/** 渲染当前对话的所有消息 */
+function renderChat() {
+  const chat = getCurrentChat();
+  chatBox.innerHTML = '';
+  if (!chat || chat.messages.length === 0) {
+    chatBox.innerHTML = `<div class="empty-state"><h2>✨ 开始新对话</h2><p>输入你的问题，或上传文档让AI基于文档回答</p></div>`;
+    return;
+  }
+  chat.messages.forEach(m => {
+    if (m.role === 'user') addMessage('user', m.content, m.sources);
+    else if (m.role === 'assistant') addMessage('assistant', m.content);
+  });
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+/** 添加一条消息到界面 */
+function addMessage(role, text, sources = null, streaming = false) {
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  const av = document.createElement('div');
+  av.className = 'avatar';
+  av.textContent = role === 'user' ? '我' : 'AI';
+  const bubble = document.createElement('div');
+  bubble.className = `bubble ${streaming ? 'streaming' : ''}`;
+
+  // 如果是知识库回答，加个标签
+  if (sources) {
+    const tag = document.createElement('div');
+    tag.className = 'kb-tag';
+    tag.textContent = '📚 基于知识库回答';
+    bubble.appendChild(tag);
+  }
+  // AI 消息用 Markdown 渲染，用户消息纯文本
+  if (role === 'assistant' && !streaming) bubble.innerHTML += marked.parse(text);
+  else bubble.textContent += text;
+
+  div.appendChild(av);
+  div.appendChild(bubble);
+  chatBox.appendChild(div);
+  chatBox.scrollTop = chatBox.scrollHeight;
+  return bubble;
+}
+
+
+// ================================================================
+// 第二部分：设置（API Key、人设、模型选择）
+// ================================================================
+
+/** 从 localStorage 加载设置 */
+function loadSettings() {
+  apiKeyInput.value = localStorage.getItem('apiKey') || '';
+  systemPromptInput.value = localStorage.getItem('systemPrompt') || '你是一个有帮助的中文AI助手，回答简洁准确。';
+  model = localStorage.getItem('model') || 'qwen3.8-flash';
+  modelSelect.value = model;
+}
+
+/** 保存设置到 localStorage */
+function saveSettings() {
+  localStorage.setItem('apiKey', apiKeyInput.value.trim());
+  localStorage.setItem('systemPrompt', systemPromptInput.value.trim());
+  localStorage.setItem('model', model);
+  alert('设置已保存');
+}
+
+/** 切换模型 */
+function changeModel() {
+  model = modelSelect.value;
+  localStorage.setItem('model', model);
+}
+
+
+// ================================================================
+// 第三部分：RAG 知识库（向量嵌入 + 余弦相似度检索）
+// ================================================================
+
+/**
+ * 调用 Embedding API，把文本转成向量
+ * @param {string} text - 要向量化的文本
+ * @returns {Promise<number[]>} 向量数组
+ */
+async function getEmbedding(text) {
+  const apiKey = apiKeyInput.value.trim();
+  const res = await fetch(EMBED_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({ model: 'text-embedding-v3', input: text })
+  });
+  const data = await res.json();
+  return data.data[0].embedding;
+}
+
+/**
+ * 余弦相似度计算：衡量两个向量的相似程度
+ * 公式：cos(A,B) = A·B / (||A|| × ||B||)
+ * 结果范围 -1 到 1，越接近 1 越相似
+ */
+function cosineSimilarity(a, b) {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * 把长文本切成重叠的小块
+ * @param {string} text - 原始文本
+ * @param {number} chunkSize - 每块字数（默认500）
+ * @param {number} overlap - 重叠字数（默认100，避免截断丢失上下文）
+ */
+function chunkText(text, chunkSize = 500, overlap = 100) {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += chunkSize - overlap) {
+    chunks.push(text.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+/**
+ * 上传文档：解析 → 分块 → 向量化 → 存入知识库
+ * 支持 .txt / .md / .html / .pdf
+ */
+async function uploadFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  kbStatus.textContent = '📖 正在读取...';
+  try {
+    let text;
+
+    // PDF 文件用 pdf.js 解析
+    if (file.name.endsWith('.pdf')) {
+      kbStatus.textContent = '📄 正在解析 PDF...';
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let pages = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        pages.push(content.items.map(item => item.str).join(' '));
+      }
+      text = pages.join('\n');
+    } else {
+      // 文本文件直接读取
+      text = await file.text();
+      // HTML 文件去掉标签只保留正文
+      if (file.name.endsWith('.html') || file.name.endsWith('.htm')) {
+        const doc = new DOMParser().parseFromString(text, 'text/html');
+        doc.querySelectorAll('script,style,nav,footer,header').forEach(el => el.remove());
+        text = doc.body.textContent.replace(/\s+/g, ' ').trim();
+      }
+    }
+
+    // 分块并逐块向量化
+    const chunks = chunkText(text);
+    kbStatus.textContent = `🔢 正在向量化 ${chunks.length} 个块...`;
+    for (const chunk of chunks) {
+      const vector = await getEmbedding(chunk);
+      knowledgeChunks.push({ text: chunk, vector, source: file.name });
+    }
+    saveKb();
+    renderKbFiles();
+    kbStatus.textContent = `✅ 已加载 ${file.name}（${chunks.length}块）`;
+  } catch (err) {
+    kbStatus.textContent = '❌ 失败: ' + err.message;
+  }
+  event.target.value = '';
+}
+
+/** 知识库持久化到 localStorage */
+function saveKb() {
+  try {
+    localStorage.setItem('knowledgeChunks', JSON.stringify(knowledgeChunks));
+  } catch (e) {
+    // localStorage 容量超限（通常5MB），降级只存文本不存向量
+    const minimal = knowledgeChunks.map(c => ({ text: c.text, source: c.source }));
+    localStorage.setItem('knowledgeChunks', JSON.stringify(minimal));
+  }
+}
+
+/** 从 localStorage 加载知识库 */
+function loadKb() {
+  try {
+    const saved = localStorage.getItem('knowledgeChunks');
+    if (saved) {
+      knowledgeChunks = JSON.parse(saved);
+      renderKbFiles();
+      if (knowledgeChunks.length > 0) kbStatus.textContent = `📚 已加载 ${knowledgeChunks.length} 个文档块`;
+    }
+  } catch (e) { knowledgeChunks = []; }
+}
+
+/** 渲染知识库文件列表（去重显示文件名） */
+function renderKbFiles() {
+  const files = [...new Set(knowledgeChunks.map(c => c.source))];
+  kbFilesDiv.innerHTML = files.map(f => `
+    <div class="kb-file">
+      <span>📄 ${f}</span>
+      <span class="del" onclick="removeKbFile('${f}')">✕</span>
+    </div>`).join('');
+}
+
+/** 删除某个知识库文件的所有块 */
+function removeKbFile(name) {
+  knowledgeChunks = knowledgeChunks.filter(c => c.source !== name);
+  saveKb();
+  renderKbFiles();
+  kbStatus.textContent = '';
+}
+
+/**
+ * RAG 检索：把用户问题向量化，找出最相似的 topK 个文档块
+ * @param {string} query - 用户问题
+ * @param {number} topK - 返回最相关的几个块（默认3）
+ */
+async function searchKb(query, topK = 3) {
+  if (knowledgeChunks.length === 0) return [];
+  const queryVec = await getEmbedding(query);
+  // 计算每个文档块与问题的相似度
+  const scored = knowledgeChunks.map(c => ({
+    ...c,
+    score: cosineSimilarity(queryVec, c.vector)
+  }));
+  // 按相似度降序排列，取前 topK 个
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, topK);
+}
+
+
+// ================================================================
+// 第四部分：导出对话为 Markdown 文件
+// ================================================================
+function exportChat() {
+  const chat = getCurrentChat();
+  if (!chat || chat.messages.length === 0) { alert('没有可导出的对话'); return; }
+  let md = `# ${chat.title}\n\n`;
+  chat.messages.forEach(m => {
+    if (m.role === 'user') md += `## 👤 用户\n${m.content}\n\n`;
+    else if (m.role === 'assistant') md += `## 🤖 AI\n${m.content}\n\n`;
+  });
+  // 生成下载链接
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${chat.title}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
+// ================================================================
+// 第五部分：输入框交互
+// ================================================================
+
+// 输入框高度自适应内容
+userInput.addEventListener('input', () => {
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 150) + 'px';
+});
+
+// Ctrl+Enter 快捷键发送
+userInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
+});
+
+
+// ================================================================
+// 第六部分：发送消息（核心流程：RAG检索 → 调API → 流式输出）
+// ================================================================
+async function sendMessage() {
+  const text = userInput.value.trim();
+  if (!text) return;
+
+  const apiKey = apiKeyInput.value.trim();
+  if (!apiKey) { alert('请先填写 API Key'); return; }
+
+  const chat = getCurrentChat();
+  const sysPrompt = systemPromptInput.value.trim();
+
+  // 1. 显示用户消息
+  addMessage('user', text);
+  chat.messages.push({ role: 'user', content: text });
+  // 用第一条消息自动作为对话标题
+  if (chat.title === '新对话') chat.title = text.slice(0, 20);
+
+  userInput.value = '';
+  userInput.style.height = 'auto';
+  sendBtn.disabled = true;
+
+  // 2. RAG 检索：在知识库中找相关内容
+  let context = '';
+  let sources = null;
+  if (knowledgeChunks.length > 0) {
+    kbStatus.textContent = '🔍 搜索知识库...';
+    try {
+      const results = await searchKb(text, 3);
+      if (results.length > 0) {
+        context = results.map((r, i) => `[文档${i+1}: ${r.source}]\n${r.text}`).join('\n\n---\n\n');
+        sources = true;
+      }
+    } catch (e) { console.error('RAG search failed', e); }
+    kbStatus.textContent = '';
+  }
+
+  // 3. 创建 AI 消息气泡（流式输出模式）
+  const aiBubble = addMessage('assistant', null, sources, true);
+
+  // 4. 构建 system prompt：人设 + 知识库上下文
+  let systemContent = sysPrompt;
+  if (context) {
+    systemContent += `\n\n请根据以下参考资料回答用户问题。如果资料中有相关信息，基于资料回答；如果资料中没有相关信息，按你的知识回答。\n\n参考资料：\n${context}`;
+  }
+
+  // 5. 构建完整消息列表：system + 历史对话
+  const apiMessages = [{ role: 'system', content: systemContent }, ...chat.messages];
+
+  try {
+    // 6. 调用聊天 API（stream: true 开启流式输出）
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: apiMessages,
+        stream: true  // 关键：流式输出，逐字返回
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      aiBubble.textContent = '请求失败: ' + err;
+      return;
+    }
+
+    // 7. 读取流式响应：SSE 格式，每行 data: {...}
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      // SSE 按行解析
+      for (const line of chunk.split('\n')) {
+        if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+          try {
+            const data = JSON.parse(line.slice(6));
+            // 提取增量内容（delta），追加到已显示文本
+            const delta = data.choices?.[0]?.delta?.content;
+            if (delta) {
+              fullText += delta;
+              aiBubble.textContent = fullText;  // 实时更新界面
+              chatBox.scrollTop = chatBox.scrollHeight;
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
+    // 8. 流式结束：用 Markdown 渲染最终结果
+    aiBubble.classList.remove('streaming');
+    aiBubble.innerHTML = marked.parse(fullText);
+    // 加上知识库来源标签
+    if (sources) {
+      const tag = document.createElement('div');
+      tag.className = 'kb-tag';
+      tag.textContent = '📚 基于知识库回答';
+      aiBubble.insertBefore(tag, aiBubble.firstChild);
+    }
+
+    // 9. 保存到对话历史
+    chat.messages.push({ role: 'assistant', content: fullText, sources });
+    saveChats();
+
+  } catch (err) {
+    aiBubble.textContent = '错误: ' + err.message;
+    aiBubble.classList.remove('streaming');
+  } finally {
+    sendBtn.disabled = false;
+    userInput.focus();
+  }
+}
+
+
+// ===== 页面初始化 =====
+loadSettings();   // 加载 API Key、人设、模型
+loadChats();      // 加载历史对话
+loadKb();         // 加载知识库
+renderChatList(); // 渲染对话列表
+renderChat();     // 渲染当前对话
+</script>
+
+</body>
+</html>
